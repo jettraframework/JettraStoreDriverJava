@@ -27,6 +27,9 @@ public class JettraRepository<T> {
 
     public boolean save(String id, T entity) {
         try {
+            if ("RECORDS".equalsIgnoreCase(modelType) && entity instanceof Record r) {
+                return client.saveRecord(collection, id, r);
+            }
             String json = gson.toJson(entity);
             return client.insertModel(modelType, collection, id, json);
         } catch (Exception e) {
@@ -39,11 +42,28 @@ public class JettraRepository<T> {
         try {
             String json = client.getModel(modelType, collection, id);
             if (json != null && !json.isEmpty()) {
+                if ("RECORDS".equalsIgnoreCase(modelType) || (entityClass.isRecord())) {
+                    JsonObject root = gson.fromJson(json, JsonObject.class);
+                    if (root != null && root.has("components")) {
+                        Object comps = root.get("components");
+                        String compJson = comps instanceof JsonObject ? comps.toString() : gson.toJson(comps);
+                        return Optional.of(gson.fromJson(compJson, entityClass));
+                    }
+                }
                 return Optional.of(gson.fromJson(json, entityClass));
             }
         } catch (Exception e) {
             e.printStackTrace();
         }
         return Optional.empty();
+    }
+
+    public boolean delete(String id) {
+        try {
+            return client.deleteModel(modelType, collection, id);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
+        }
     }
 }

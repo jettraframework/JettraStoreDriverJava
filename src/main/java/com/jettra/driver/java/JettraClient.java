@@ -175,10 +175,59 @@ public class JettraClient {
     public JettraFluentQuery keyvalue() { return model("KEYVALUE"); }
     public JettraFluentQuery geospatial() { return model("GEOSPATIAL"); }
     public JettraFluentQuery object() { return model("OBJECT"); }
+    public JettraFluentQuery records() { return model("RECORDS"); }
+
+    /**
+     * Saves a Java Record into the RECORDS engine collection.
+     */
+    public <R extends Record> boolean saveRecord(String collection, String id, R record) throws Exception {
+        JettraJson json = new JettraJson();
+        JsonObject wrapper = new JsonObject();
+        wrapper.addProperty("_recordClass", record.getClass().getName());
+        JsonObject comps = json.fromJson(json.toJson(record), JsonObject.class);
+        wrapper.add("components", comps);
+        return insertModel("RECORDS", collection, id, json.toJson(wrapper));
+    }
+
+    /**
+     * Retrieves a Java Record by ID from the RECORDS engine.
+     */
+    public <R extends Record> java.util.Optional<R> getRecord(String collection, String id, Class<R> recordClass) throws Exception {
+        String jsonStr = getModel("RECORDS", collection, id);
+        if (jsonStr != null && !jsonStr.isBlank()) {
+            JettraJson json = new JettraJson();
+            JsonObject root = json.fromJson(jsonStr, JsonObject.class);
+            String compJson = (root != null && root.has("components")) ? root.getAsJsonObject("components").toString() : jsonStr;
+            return java.util.Optional.of(json.fromJson(compJson, recordClass));
+        }
+        return java.util.Optional.empty();
+    }
+
+    /**
+     * Deletes a record or model object by ID.
+     */
+    public boolean deleteModel(String modelType, String collection, String id) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("http://" + host + ":" + port + "/api/model/" + modelType.toLowerCase() + "/" + collection + "/" + id))
+                .header("Authorization", "Bearer " + authToken)
+                .DELETE()
+                .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        return response.statusCode() == 204 || response.statusCode() == 200;
+    }
+
+    public boolean deleteRecord(String collection, String id) throws Exception {
+        return deleteModel("RECORDS", collection, id);
+    }
 
     // --- Repository Pattern Helper ---
 
     public <T> JettraRepository<T> repository(Class<T> entityClass, String modelType, String collection) {
         return new JettraRepository<>(this, entityClass, modelType, collection);
+    }
+
+    public <R extends Record> JettraRepository<R> recordRepository(Class<R> recordClass, String collection) {
+        return new JettraRepository<>(this, recordClass, "RECORDS", collection);
     }
 }
