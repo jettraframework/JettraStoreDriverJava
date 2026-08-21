@@ -10,9 +10,27 @@ import io.jettra.json.JsonObject;
 
 /**
  * JettraClient is the main entry point for interacting with the JettraStoreEngine from Java.
- * It provides methods to connect, authenticate, and perform operations on the database.
+ * Provides methods to connect, authenticate, perform multi-model operations,
+ * generate IDs via multiple strategies (Manual, Auto-increment, Composite UUID),
+ * and manage version history & restorations.
  */
 public class JettraClient {
+
+    public enum IdMode {
+        MANUAL,
+        AUTOINCREMENT,
+        UUID;
+
+        public static IdMode fromString(String raw) {
+            if (raw == null || raw.isBlank()) return MANUAL;
+            String norm = raw.trim().toUpperCase();
+            return switch (norm) {
+                case "AUTO", "AUTOINCREMENT", "AUTO_INCREMENT" -> AUTOINCREMENT;
+                case "UUID", "COMPOSITE", "COMPOSITE_UUID" -> UUID;
+                default -> MANUAL;
+            };
+        }
+    }
 
     private final String host;
     private final int port;
@@ -34,7 +52,6 @@ public class JettraClient {
      */
     public void connect() {
         System.out.println("Connecting to JettraStoreEngine at " + host + ":" + port + "...");
-        // TODO: Initialize REST/gRPC client connections here
         this.isConnected = true;
         System.out.println("Connected successfully.");
     }
@@ -45,7 +62,6 @@ public class JettraClient {
     public void close() {
         if (isConnected) {
             System.out.println("Closing connection to JettraStoreEngine...");
-            // TODO: Shutdown REST/gRPC client connections here
             this.isConnected = false;
             System.out.println("Connection closed.");
         }
@@ -79,12 +95,24 @@ public class JettraClient {
         return false;
     }
 
+    // --- Document Operations with ID Modes ---
+
     /**
-     * Inserts a document into a collection.
+     * Inserts a document into a collection with a manual ID.
      */
     public boolean insertDocument(String collection, String id, String jsonDocument) throws Exception {
+        return insertDocument(collection, id, jsonDocument, IdMode.MANUAL);
+    }
+
+    /**
+     * Inserts a document into a collection specifying the IdMode strategy.
+     */
+    public boolean insertDocument(String collection, String id, String jsonDocument, IdMode idMode) throws Exception {
+        String targetId = (id == null || id.isBlank()) ? (idMode == IdMode.AUTOINCREMENT ? "auto" : "uuid") : id;
+        String url = String.format("http://%s:%d/api/document/%s/%s?id_mode=%s", host, port, collection, targetId, idMode.name().toLowerCase());
+        
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create("http://" + host + ":" + port + "/api/document/" + collection + "/" + id))
+                .uri(URI.create(url))
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer " + authToken)
                 .POST(HttpRequest.BodyPublishers.ofString(jsonDocument))
@@ -92,6 +120,31 @@ public class JettraClient {
 
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
         return response.statusCode() == 201;
+    }
+
+    /**
+     * Inserts a document with automatic ID generation (Auto-increment or Composite UUID).
+     */
+    public String insertDocumentAuto(String collection, String jsonDocument, IdMode idMode) throws Exception {
+        String targetId = idMode == IdMode.AUTOINCREMENT ? "auto" : "uuid";
+        String url = String.format("http://%s:%d/api/document/%s/%s?id_mode=%s", host, port, collection, targetId, idMode.name().toLowerCase());
+        
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .header("Content-Type", "application/json")
+                .header("Authorization", "Bearer " + authToken)
+                .POST(HttpRequest.BodyPublishers.ofString(jsonDocument))
+                .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() == 201) {
+            JettraJson json = new JettraJson();
+            JsonObject obj = json.fromJson(response.body(), JsonObject.class);
+            if (obj != null && obj.has("id")) {
+                return (String) obj.get("id");
+            }
+        }
+        return null;
     }
 
     /**
@@ -112,7 +165,40 @@ public class JettraClient {
     }
 
     /**
-     * Inserts a document into a specific model (e.g. VECTOR, GRAPH, COLUMN, KEYVALUE).
+     * Retrieves document version history.
+     */
+    public String getDocumentHistory(String collection, String id) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("http://" + host + ":" + port + "/api/document/" + collection + "/" + id + "/history"))
+                .header("Authorization", "Bearer " + authToken)
+                .GET()
+                .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() == 200) {
+            return response.body();
+        }
+        return "[]";
+    }
+
+    /**
+     * Restores a document to a historical version by timestamp.
+     */
+    public boolean restoreDocumentVersion(String collection, String id, long timestamp) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("http://" + host + ":" + port + "/api/document/" + collection + "/" + id + "/restore?timestamp=" + timestamp))
+                .header("Authorization", "Bearer " + authToken)
+                .POST(HttpRequest.BodyPublishers.noBody())
+                .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        return response.statusCode() == 200;
+    }
+
+    // --- Multi-Model Universal Operations ---
+
+    /**
+     * Inserts a document into a specific model (e.g. VECTOR, GRAPH, COLUMN, KEYVALUE, RECORDS).
      */
     public boolean insertModel(String modelType, String collection, String id, String jsonDocument) throws Exception {
         HttpRequest request = HttpRequest.newBuilder()
@@ -127,7 +213,7 @@ public class JettraClient {
     }
 
     /**
-     * Retrieves a document from a specific model.
+     * Retrieves an object from a specific model.
      */
     public String getModel(String modelType, String collection, String id) throws Exception {
         HttpRequest request = HttpRequest.newBuilder()
@@ -142,6 +228,54 @@ public class JettraClient {
         }
         return null;
     }
+
+    /**
+     * Deletes a model object by ID.
+     */
+    public boolean deleteModel(String modelType, String collection, String id) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("http://" + host + ":" + port + "/api/model/" + modelType.toLowerCase() + "/" + collection + "/" + id))
+                .header("Authorization", "Bearer " + authToken)
+                .DELETE()
+                .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        return response.statusCode() == 204 || response.statusCode() == 200;
+    }
+
+    // --- Dedicated Records Engine Helpers (Java 25 Records) ---
+
+    /**
+     * Saves a Java Record into the RECORDS engine collection.
+     */
+    public <R extends Record> boolean saveRecord(String collection, String id, R record) throws Exception {
+        JettraJson json = new JettraJson();
+        JsonObject wrapper = new JsonObject();
+        wrapper.addProperty("_recordClass", record.getClass().getName());
+        JsonObject comps = json.fromJson(json.toJson(record), JsonObject.class);
+        wrapper.add("components", comps);
+        return insertModel("RECORDS", collection, id, json.toJson(wrapper));
+    }
+
+    /**
+     * Retrieves a Java Record by ID from the RECORDS engine.
+     */
+    public <R extends Record> java.util.Optional<R> getRecord(String collection, String id, Class<R> recordClass) throws Exception {
+        String jsonStr = getModel("RECORDS", collection, id);
+        if (jsonStr != null && !jsonStr.isBlank()) {
+            JettraJson json = new JettraJson();
+            JsonObject root = json.fromJson(jsonStr, JsonObject.class);
+            String compJson = (root != null && root.has("components")) ? root.getAsJsonObject("components").toString() : jsonStr;
+            return java.util.Optional.of(json.fromJson(compJson, recordClass));
+        }
+        return java.util.Optional.empty();
+    }
+
+    public boolean deleteRecord(String collection, String id) throws Exception {
+        return deleteModel("RECORDS", collection, id);
+    }
+
+    // --- Administrative & Monitoring ---
 
     /**
      * Triggers a manual backup.
@@ -177,50 +311,6 @@ public class JettraClient {
     public JettraFluentQuery object() { return model("OBJECT"); }
     public JettraFluentQuery records() { return model("RECORDS"); }
 
-    /**
-     * Saves a Java Record into the RECORDS engine collection.
-     */
-    public <R extends Record> boolean saveRecord(String collection, String id, R record) throws Exception {
-        JettraJson json = new JettraJson();
-        JsonObject wrapper = new JsonObject();
-        wrapper.addProperty("_recordClass", record.getClass().getName());
-        JsonObject comps = json.fromJson(json.toJson(record), JsonObject.class);
-        wrapper.add("components", comps);
-        return insertModel("RECORDS", collection, id, json.toJson(wrapper));
-    }
-
-    /**
-     * Retrieves a Java Record by ID from the RECORDS engine.
-     */
-    public <R extends Record> java.util.Optional<R> getRecord(String collection, String id, Class<R> recordClass) throws Exception {
-        String jsonStr = getModel("RECORDS", collection, id);
-        if (jsonStr != null && !jsonStr.isBlank()) {
-            JettraJson json = new JettraJson();
-            JsonObject root = json.fromJson(jsonStr, JsonObject.class);
-            String compJson = (root != null && root.has("components")) ? root.getAsJsonObject("components").toString() : jsonStr;
-            return java.util.Optional.of(json.fromJson(compJson, recordClass));
-        }
-        return java.util.Optional.empty();
-    }
-
-    /**
-     * Deletes a record or model object by ID.
-     */
-    public boolean deleteModel(String modelType, String collection, String id) throws Exception {
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create("http://" + host + ":" + port + "/api/model/" + modelType.toLowerCase() + "/" + collection + "/" + id))
-                .header("Authorization", "Bearer " + authToken)
-                .DELETE()
-                .build();
-
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        return response.statusCode() == 204 || response.statusCode() == 200;
-    }
-
-    public boolean deleteRecord(String collection, String id) throws Exception {
-        return deleteModel("RECORDS", collection, id);
-    }
-
     // --- Repository Pattern Helper ---
 
     public <T> JettraRepository<T> repository(Class<T> entityClass, String modelType, String collection) {
@@ -229,5 +319,24 @@ public class JettraClient {
 
     public <R extends Record> JettraRepository<R> recordRepository(Class<R> recordClass, String collection) {
         return new JettraRepository<>(this, recordClass, "RECORDS", collection);
+    }
+
+    // --- Cross-Engine Fast References ---
+
+    public JettraReference createRef(String engine, String db, String id) {
+        return JettraReference.of(engine, db, id);
+    }
+
+    public JettraReference createRef(String node, String engine, String db, String id) {
+        return JettraReference.of(node, engine, db, id);
+    }
+
+    public String resolveRef(String refUri) throws Exception {
+        JettraReference ref = JettraReference.parse(refUri);
+        return resolveRef(ref);
+    }
+
+    public String resolveRef(JettraReference ref) throws Exception {
+        return getModel(ref.engine(), ref.database(), ref.entityId());
     }
 }

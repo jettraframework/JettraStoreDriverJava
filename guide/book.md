@@ -112,3 +112,41 @@ client.keyvalue().collection("cache").insert("session_token", "abc-123");
 // TimeSeries Engine
 client.timeseries().collection("metrics").insert("1755735000000", "{\"cpu\": 42.5, \"memory\": 78.0}");
 ```
+
+### 4.4 ObjectId / DocumentId Generation Modes
+`JettraStoreDriverJava` supports 3 flexible ID generation strategies:
+1. **Manual (`IdMode.MANUAL`)**: Custom ID specified by the caller.
+2. **Auto-increment (`IdMode.AUTOINCREMENT`)**: Sequential numeric ID managed internally by the database (`1, 2, 3...`).
+3. **Composite UUID (`IdMode.UUID`)**: Globally unique identifier combining CPU/Host signature, millisecond timestamp, database/collection digest, and random UUID entropy.
+
+```java
+import com.jettra.driver.java.JettraClient;
+import com.jettra.driver.java.JettraClient.IdMode;
+
+// 1. Manual ID
+client.insertDocument("orders", "ORD-1001", "{\"item\":\"Server Rack\",\"qty\":2}", IdMode.MANUAL);
+
+// 2. Auto-increment Sequence
+String autoId1 = client.insertDocumentAuto("invoices", "{\"total\": 450.00}", IdMode.AUTOINCREMENT);
+String autoId2 = client.insertDocumentAuto("invoices", "{\"total\": 890.50}", IdMode.AUTOINCREMENT);
+System.out.println("Generated Sequences: " + autoId1 + ", " + autoId2); // e.g. 1, 2
+
+// 3. Composite UUID
+String uuidId = client.insertDocumentAuto("events", "{\"event\":\"login\",\"user\":\"admin\"}", IdMode.UUID);
+System.out.println("Generated Composite UUID: " + uuidId); // e.g. 8a7f1c2d-18dc93a4-a1b2-9f82ab34
+```
+
+### 4.5 Version History & Point-in-Time Restoration
+```java
+// Inspect all historical versions of a document
+String historyJson = client.getDocumentHistory("orders", "ORD-1001");
+System.out.println("Version History: " + historyJson);
+
+// Restore to a specific version timestamp
+long targetTimestamp = 1755735000000L;
+boolean restored = client.restoreDocumentVersion("orders", "ORD-1001", targetTimestamp);
+if (restored) {
+    System.out.println("Document successfully rolled back to timestamp " + targetTimestamp);
+}
+```
+
