@@ -12,6 +12,28 @@
 8. **GEOSPATIAL**: 2D GIS points with Haversine spherical distance calculation.
 9. **OBJECT**: Binary BLOBs, chunked blocks, and Base64 media streams.
 
+## 1.1 Unified Hierarchical Data Model
+Every storage engine in JettraStoreEngine follows the canonical 3-level abstraction hierarchy:
+```text
+JettraStoreEngine
+ └── EngineContext (e.g., DocumentEngine, VectorEngine, TimeSeriesEngine)
+      └── StorageContainer (Database / Keyspace / Bucket / Graph)
+           └── StorageUnit (Collection / Metric / Layer / Index / ColumnFamily)
+                └── StorageItem (Document / Point / Feature / Vector / KeyValue / Node)
+```
+
+| Engine Model | Level 1: StorageContainer | Level 2: StorageUnit | Level 3: StorageItem |
+| --- | --- | --- | --- |
+| **DOCUMENT** | Database | Collection | Document (JSON / BSON) |
+| **KEYVALUE** | Database / Keyspace | Bucket / Namespace | Key-Value Pair |
+| **COLUMN** | Keyspace | Column Family / Table | Row Key + Dynamic Columns |
+| **GRAPH** | Graph Database | Node/Edge Label | Vertex (Node) & Edge |
+| **VECTOR** | Vector DB / Catalog | Vector Index / Collection | Vector (float[]) + Payload |
+| **TIMESERIES** | Database / Bucket | Metric / Measurement | Data Point (Timestamp + Values) |
+| **GEOSPATIAL** | Spatial DB / Catalog | Spatial Layer / Feature Set | Feature (Geometry + Attrs) |
+| **OBJECT** | Storage Account / Tenant | Bucket / Container | Blob Object + Metadata |
+| **RECORDS** | Database / Schema | Record Table / Entity Set | Immutable Java 25 Record |
+
 ---
 
 ## 2. Key Features
