@@ -1,10 +1,13 @@
 package com.jettra.driver.java;
 
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Map;
 import io.jettra.json.JettraJson;
 import io.jettra.json.JsonObject;
 
@@ -12,7 +15,7 @@ import io.jettra.json.JsonObject;
  * JettraClient is the main entry point for interacting with the JettraStoreEngine from Java.
  * Provides methods to connect, authenticate, perform multi-model operations,
  * generate IDs via multiple strategies (Manual, Auto-increment, Composite UUID),
- * and manage version history & restorations.
+ * and manage version history & restorations with strict URI percent-encoding.
  */
 public class JettraClient {
 
@@ -71,13 +74,55 @@ public class JettraClient {
         return isConnected;
     }
 
+    public String getHost() { return host; }
+    public int getPort() { return port; }
+
+    /**
+     * Percent-encodes a path segment using UTF-8.
+     */
+    public static String encodePathSegment(String segment) {
+        if (segment == null) return "";
+        return URLEncoder.encode(segment, StandardCharsets.UTF_8).replace("+", "%20");
+    }
+
+    /**
+     * Percent-encodes a query parameter using UTF-8.
+     */
+    public static String encodeQueryParam(String param) {
+        if (param == null) return "";
+        return URLEncoder.encode(param, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Safely constructs a URI without risk of URISyntaxException from raw characters.
+     */
+    public URI buildUri(String path, Map<String, String> queryParams) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("http://").append(host).append(":").append(port);
+        if (!path.startsWith("/")) {
+            sb.append("/");
+        }
+        sb.append(path);
+        if (queryParams != null && !queryParams.isEmpty()) {
+            sb.append("?");
+            boolean first = true;
+            for (Map.Entry<String, String> entry : queryParams.entrySet()) {
+                if (!first) sb.append("&");
+                sb.append(encodeQueryParam(entry.getKey())).append("=").append(encodeQueryParam(entry.getValue()));
+                first = false;
+            }
+        }
+        return URI.create(sb.toString());
+    }
+
     /**
      * Authenticates with the server and stores the JWT.
      */
     public boolean login(String username, String password) throws Exception {
         String jsonPayload = String.format("{\"username\":\"%s\",\"password\":\"%s\"}", username, password);
+        URI uri = buildUri("/api/auth/login", null);
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create("http://" + host + ":" + port + "/api/auth/login"))
+                .uri(uri)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(jsonPayload))
                 .build();
@@ -109,10 +154,11 @@ public class JettraClient {
      */
     public boolean insertDocument(String collection, String id, String jsonDocument, IdMode idMode) throws Exception {
         String targetId = (id == null || id.isBlank()) ? (idMode == IdMode.AUTOINCREMENT ? "auto" : "uuid") : id;
-        String url = String.format("http://%s:%d/api/document/%s/%s?id_mode=%s", host, port, collection, targetId, idMode.name().toLowerCase());
+        String path = "/api/document/" + encodePathSegment(collection) + "/" + encodePathSegment(targetId);
+        URI uri = buildUri(path, Map.of("id_mode", idMode.name().toLowerCase()));
         
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
+                .uri(uri)
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer " + authToken)
                 .POST(HttpRequest.BodyPublishers.ofString(jsonDocument))
@@ -127,10 +173,11 @@ public class JettraClient {
      */
     public String insertDocumentAuto(String collection, String jsonDocument, IdMode idMode) throws Exception {
         String targetId = idMode == IdMode.AUTOINCREMENT ? "auto" : "uuid";
-        String url = String.format("http://%s:%d/api/document/%s/%s?id_mode=%s", host, port, collection, targetId, idMode.name().toLowerCase());
+        String path = "/api/document/" + encodePathSegment(collection) + "/" + encodePathSegment(targetId);
+        URI uri = buildUri(path, Map.of("id_mode", idMode.name().toLowerCase()));
         
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
+                .uri(uri)
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer " + authToken)
                 .POST(HttpRequest.BodyPublishers.ofString(jsonDocument))
@@ -151,8 +198,10 @@ public class JettraClient {
      * Retrieves a document by ID.
      */
     public String getDocument(String collection, String id) throws Exception {
+        String path = "/api/document/" + encodePathSegment(collection) + "/" + encodePathSegment(id);
+        URI uri = buildUri(path, null);
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create("http://" + host + ":" + port + "/api/document/" + collection + "/" + id))
+                .uri(uri)
                 .header("Authorization", "Bearer " + authToken)
                 .GET()
                 .build();
@@ -168,8 +217,10 @@ public class JettraClient {
      * Retrieves document version history.
      */
     public String getDocumentHistory(String collection, String id) throws Exception {
+        String path = "/api/document/" + encodePathSegment(collection) + "/" + encodePathSegment(id) + "/history";
+        URI uri = buildUri(path, null);
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create("http://" + host + ":" + port + "/api/document/" + collection + "/" + id + "/history"))
+                .uri(uri)
                 .header("Authorization", "Bearer " + authToken)
                 .GET()
                 .build();
@@ -185,8 +236,10 @@ public class JettraClient {
      * Restores a document to a historical version by timestamp.
      */
     public boolean restoreDocumentVersion(String collection, String id, long timestamp) throws Exception {
+        String path = "/api/document/" + encodePathSegment(collection) + "/" + encodePathSegment(id) + "/restore";
+        URI uri = buildUri(path, Map.of("timestamp", String.valueOf(timestamp)));
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create("http://" + host + ":" + port + "/api/document/" + collection + "/" + id + "/restore?timestamp=" + timestamp))
+                .uri(uri)
                 .header("Authorization", "Bearer " + authToken)
                 .POST(HttpRequest.BodyPublishers.noBody())
                 .build();
@@ -201,8 +254,10 @@ public class JettraClient {
      * Inserts a document into a specific model (e.g. VECTOR, GRAPH, COLUMN, KEYVALUE, RECORDS).
      */
     public boolean insertModel(String modelType, String collection, String id, String jsonDocument) throws Exception {
+        String path = "/api/model/" + encodePathSegment(modelType.toLowerCase()) + "/" + encodePathSegment(collection) + "/" + encodePathSegment(id);
+        URI uri = buildUri(path, null);
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create("http://" + host + ":" + port + "/api/model/" + modelType.toLowerCase() + "/" + collection + "/" + id))
+                .uri(uri)
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer " + authToken)
                 .POST(HttpRequest.BodyPublishers.ofString(jsonDocument))
@@ -216,8 +271,10 @@ public class JettraClient {
      * Retrieves an object from a specific model.
      */
     public String getModel(String modelType, String collection, String id) throws Exception {
+        String path = "/api/model/" + encodePathSegment(modelType.toLowerCase()) + "/" + encodePathSegment(collection) + "/" + encodePathSegment(id);
+        URI uri = buildUri(path, null);
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create("http://" + host + ":" + port + "/api/model/" + modelType.toLowerCase() + "/" + collection + "/" + id))
+                .uri(uri)
                 .header("Authorization", "Bearer " + authToken)
                 .GET()
                 .build();
@@ -233,8 +290,10 @@ public class JettraClient {
      * Deletes a model object by ID.
      */
     public boolean deleteModel(String modelType, String collection, String id) throws Exception {
+        String path = "/api/model/" + encodePathSegment(modelType.toLowerCase()) + "/" + encodePathSegment(collection) + "/" + encodePathSegment(id);
+        URI uri = buildUri(path, null);
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create("http://" + host + ":" + port + "/api/model/" + modelType.toLowerCase() + "/" + collection + "/" + id))
+                .uri(uri)
                 .header("Authorization", "Bearer " + authToken)
                 .DELETE()
                 .build();
@@ -281,8 +340,9 @@ public class JettraClient {
      * Triggers a manual backup.
      */
     public boolean triggerBackup() throws Exception {
+        URI uri = buildUri("/api/backup", null);
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create("http://" + host + ":" + port + "/api/backup"))
+                .uri(uri)
                 .header("Authorization", "Bearer " + authToken)
                 .POST(HttpRequest.BodyPublishers.noBody())
                 .build();
