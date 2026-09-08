@@ -305,15 +305,131 @@ public class JettraClient {
     // --- Dedicated Records Engine Helpers (Java 25 Records) ---
 
     /**
-     * Saves a Java Record into the RECORDS engine collection.
+     * Saves a Java Record into the RECORDS engine collection with full schema reflection,
+     * supporting primitives, temporal types (LocalDate, Instant, etc.), collections,
+     * enums, and nested records.
      */
     public <R extends Record> boolean saveRecord(String collection, String id, R record) throws Exception {
         JettraJson json = new JettraJson();
         JsonObject wrapper = new JsonObject();
         wrapper.addProperty("_recordClass", record.getClass().getName());
-        JsonObject comps = json.fromJson(json.toJson(record), JsonObject.class);
-        wrapper.add("components", comps);
+        wrapper.addProperty("_timestamp", System.currentTimeMillis());
+        wrapper.addProperty("_version", 1L);
+
+        JsonObject schema = new JsonObject();
+        JsonObject components = new JsonObject();
+
+        try {
+            java.lang.reflect.RecordComponent[] recordComponents = record.getClass().getRecordComponents();
+            if (recordComponents != null) {
+                for (java.lang.reflect.RecordComponent rc : recordComponents) {
+                    String fieldName = rc.getName();
+                    Class<?> type = rc.getType();
+                    String typeName = type.getSimpleName();
+
+                    if (java.util.List.class.isAssignableFrom(type)) {
+                        typeName = "List<String>";
+                    } else if (java.util.Set.class.isAssignableFrom(type)) {
+                        typeName = "Set<String>";
+                    } else if (java.util.Collection.class.isAssignableFrom(type)) {
+                        typeName = "Collection<String>";
+                    } else if (type.isArray()) {
+                        typeName = "Array<" + type.getComponentType().getSimpleName() + ">";
+                    } else if (type.isEnum()) {
+                        typeName = "Enum<" + type.getSimpleName() + ">";
+                    } else if (type.isRecord()) {
+                        typeName = type.getSimpleName();
+                    }
+                    schema.addProperty(fieldName, typeName);
+
+                    Object val = rc.getAccessor().invoke(record);
+                    if (val != null) {
+                        serializeComponentValue(components, fieldName, val);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            JsonObject comps = json.fromJson(json.toJson(record), JsonObject.class);
+            components = comps != null ? comps : new JsonObject();
+        }
+
+        wrapper.add("_schema", schema);
+        wrapper.add("components", components);
         return insertModel("RECORDS", collection, id, json.toJson(wrapper));
+    }
+
+    /**
+     * Saves a Record with explicit class name, components, and schema.
+     */
+    public boolean saveRecord(String collection, String id, String recordClass, JsonObject components, JsonObject schema) throws Exception {
+        JettraJson json = new JettraJson();
+        JsonObject wrapper = new JsonObject();
+        wrapper.addProperty("_recordClass", recordClass != null ? recordClass : "java.lang.Record");
+        wrapper.addProperty("_timestamp", System.currentTimeMillis());
+        wrapper.addProperty("_version", 1L);
+        wrapper.add("_schema", schema != null ? schema : new JsonObject());
+        wrapper.add("components", components != null ? components : new JsonObject());
+        return insertModel("RECORDS", collection, id, json.toJson(wrapper));
+    }
+
+    private static void serializeComponentValue(JsonObject target, String key, Object val) {
+        if (val == null) return;
+        if (val instanceof Number n) {
+            target.addProperty(key, n);
+        } else if (val instanceof Boolean b) {
+            target.addProperty(key, b);
+        } else if (val instanceof Character c) {
+            target.addProperty(key, c);
+        } else if (val instanceof Enum<?> e) {
+            target.addProperty(key, e.name());
+        } else if (val instanceof java.time.temporal.Temporal || val instanceof java.util.Date) {
+            target.addProperty(key, val.toString());
+        } else if (val instanceof Record rec) {
+            target.add(key, recordToJsonObject(rec));
+        } else if (val instanceof JsonObject jo) {
+            target.add(key, jo);
+        } else if (val instanceof io.jettra.json.JsonArray ja) {
+            target.add(key, ja);
+        } else if (val instanceof Iterable<?> iter) {
+            io.jettra.json.JsonArray arr = new io.jettra.json.JsonArray();
+            for (Object item : iter) {
+                if (item instanceof Number n) arr.add(n);
+                else if (item instanceof Boolean b) arr.add(b);
+                else if (item instanceof Record r) arr.add(recordToJsonObject(r));
+                else if (item != null) arr.add(item.toString());
+            }
+            target.add(key, arr);
+        } else if (val.getClass().isArray()) {
+            io.jettra.json.JsonArray arr = new io.jettra.json.JsonArray();
+            int len = java.lang.reflect.Array.getLength(val);
+            for (int i = 0; i < len; i++) {
+                Object item = java.lang.reflect.Array.get(val, i);
+                if (item instanceof Number n) arr.add(n);
+                else if (item instanceof Boolean b) arr.add(b);
+                else if (item instanceof Record r) arr.add(recordToJsonObject(r));
+                else if (item != null) arr.add(item.toString());
+            }
+            target.add(key, arr);
+        } else {
+            target.addProperty(key, val.toString());
+        }
+    }
+
+    private static JsonObject recordToJsonObject(Record record) {
+        JsonObject jo = new JsonObject();
+        if (record == null) return jo;
+        jo.addProperty("_recordClass", record.getClass().getName());
+        try {
+            java.lang.reflect.RecordComponent[] components = record.getClass().getRecordComponents();
+            if (components != null) {
+                for (java.lang.reflect.RecordComponent rc : components) {
+                    Object v = rc.getAccessor().invoke(record);
+                    if (v == null) continue;
+                    serializeComponentValue(jo, rc.getName(), v);
+                }
+            }
+        } catch (Exception ignored) {}
+        return jo;
     }
 
     /**

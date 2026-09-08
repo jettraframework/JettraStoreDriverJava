@@ -77,14 +77,34 @@ public class ClientDemo {
 }
 ```
 
-### 4.2 Records Engine: Typed Java 25 Records
+### 4.2 Records Engine: Typed Java 25 Records & Supported Types
+
+`JettraStoreDriverJava` supports canonical reflection and serialization for:
+- **Temporal types**: `Date`, `LocalDate`, `LocalTime`, `LocalDateTime`, `Instant`, `ZonedDateTime`, `OffsetDateTime`.
+- **Primitives**: `byte`, `short`, `int`, `long`, `float`, `double`, `boolean`, `char`.
+- **Collections & Lists**: `List<>`, `Array<>`, `Set<>`, `Collection<>`.
+- **Enumerations**: `Enum<>`.
+- **Nested Objects & Records**: Deep domain record trees (e.g. `Persona` containing `Pais`).
+
 ```java
 import com.jettra.driver.java.JettraClient;
 import com.jettra.driver.java.JettraRepository;
+import java.time.LocalDate;
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
-// Domain Record
-public record EmployeeRecord(String id, String fullName, String department, double salary, boolean active) {}
+public enum EstadoCivil { SOLTERO, CASADO, DIVORCIADO }
+public record Pais(String codigo, String nombre) {}
+public record Persona(
+    String id,
+    String nombre,
+    Pais pais,
+    LocalDate fechaNacimiento,
+    Instant creadoEn,
+    List<String> tags,
+    EstadoCivil estadoCivil
+) {}
 
 public class RecordsDemo {
     public static void main(String[] args) throws Exception {
@@ -92,29 +112,34 @@ public class RecordsDemo {
         client.connect();
         client.login("admin", "admin");
 
-        // 1. Using Typed Record Repository
-        JettraRepository<EmployeeRecord> repo = client.recordRepository(EmployeeRecord.class, "employees");
-        
-        // Save
-        EmployeeRecord emp = new EmployeeRecord("EMP-001", "Carlos Mendez", "Engineering", 95000.0, true);
-        repo.save("EMP-001", emp);
+        // 1. Direct Reflection saveRecord (schema automatically extracted)
+        Persona p = new Persona(
+            "PER-001",
+            "Aristides",
+            new Pais("PA", "Panamá"),
+            LocalDate.of(1980, 5, 20),
+            Instant.now(),
+            List.of("java", "databases", "microservices"),
+            EstadoCivil.CASADO
+        );
+        client.saveRecord("personas", p.id(), p);
 
-        // Find by ID
-        Optional<EmployeeRecord> found = repo.findById("EMP-001");
-        found.ifPresent(e -> System.out.println("Found: " + e.fullName() + " ($" + e.salary() + ")"));
+        // 2. Using Typed Record Repository
+        JettraRepository<Persona> repo = client.recordRepository(Persona.class, "personas");
+        Optional<Persona> found = repo.findById("PER-001");
+        found.ifPresent(pers -> System.out.println("Found: " + pers.nombre() + " from " + pers.pais().nombre()));
 
-        // 2. Direct Client Helpers
-        client.saveRecord("employees", "EMP-002", new EmployeeRecord("EMP-002", "Ana Gomez", "Design", 88000.0, true));
-        Optional<EmployeeRecord> ana = client.getRecord("employees", "EMP-002", EmployeeRecord.class);
+        // 3. Direct Record retrieval
+        Optional<Persona> loaded = client.getRecord("personas", "PER-001", Persona.class);
 
-        // 3. Fluent Records API
-        client.records().collection("employees").insert("EMP-003", 
-            "{\"_recordClass\":\"EmployeeRecord\",\"components\":{\"id\":\"EMP-003\",\"fullName\":\"David Kim\"}}");
-        String rawJson = client.records().collection("employees").get("EMP-003");
+        // 4. Fluent Records API
+        client.records().collection("personas").insert("PER-002", 
+            "{\"_recordClass\":\"Persona\",\"components\":{\"nombre\":\"Bob\",\"fechaNacimiento\":\"1992-08-14\"}}");
+        String rawJson = client.records().collection("personas").get("PER-002");
 
         // Delete
-        repo.delete("EMP-001");
-        client.deleteRecord("employees", "EMP-002");
+        repo.delete("PER-001");
+        client.deleteRecord("personas", "PER-002");
     }
 }
 ```
