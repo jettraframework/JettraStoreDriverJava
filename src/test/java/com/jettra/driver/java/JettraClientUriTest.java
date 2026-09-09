@@ -1,14 +1,16 @@
 package com.jettra.driver.java;
 
-import org.junit.jupiter.api.Test;
+import io.jettra.test.annotation.NotRequiresRunningServer;
+import io.jettra.test.annotation.Test;
 import java.net.URI;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static io.jettra.test.core.JettraAssert.*;
 
 /**
  * Verifies URI builder percent-encoding and safe character escaping in JettraClient.
  */
+@NotRequiresRunningServer
 public class JettraClientUriTest {
 
     @Test
