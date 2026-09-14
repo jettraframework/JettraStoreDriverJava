@@ -12,11 +12,11 @@
     
     <dependencies>
         <!-- Include RestClient, gRPC client dependencies -->
-        <dependency>
+<!--        <dependency>
             <groupId>io.jettra</groupId>
             <artifactId>JettraRest</artifactId>
             <version>1.0.0-SNAPSHOT</version>
-        </dependency>
+        </dependency>-->
         <dependency>
             <groupId>io.jettra</groupId>
             <artifactId>JettraGRPC</artifactId>
